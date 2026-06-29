@@ -1,0 +1,56 @@
+# The overarching identifying name of our automated pipeline execution
+name: CI/CD Core Enterprise Pipeline
+
+# Define the Event Triggers (The specific webhook activities that kick off the automation)
+on:
+  push:
+    branches:
+      - main  # Fires automatically whenever code is merged or pushed directly into main
+
+jobs:
+  # --- STAGE 1: continuous integration (TEST & BUILD RUN) ---
+  build-and-test:
+    name: Continuous Integration Stage
+    runs-on: ubuntu-latest  # Allocates a fresh, sterile Ubuntu Linux Virtual Machine Runner
+
+    steps:
+      - name: Checkout Source Code Context
+        uses: actions/checkout@v4  # Clones your repository files into the isolated runner filesystem
+
+      - name: Initialize Node.js Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'       # Pins the execution environment to Enterprise Node LTS v20
+          cache: 'npm'             # Automatically caches dependency layers to drastically speed up sequential builds
+
+      - name: Install Project Dependencies Safely
+        run: npm ci               # "Clean Install" - enforces deterministic, production-locked installs
+
+      - name: Execute Automated Test Suites
+        run: npm test             # Executes Jest. If this fails, the runner stops instantly and shields production
+
+  # --- STAGE 2: CONTINUOUS DEPLOYMENT (ARTIFACT COMPILATION & DELIVERY) ---
+  deploy-image:
+    name: Continuous Deployment Stage
+    needs: build-and-test        # Strict Dependency Mapping! This job will wait until Stage 1 passes completely.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code Context
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Docker Hub Registry Securely
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }} # Injecting our encrypted secrets at runtime
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Ship Compiled Artifact
+        uses: docker/build-push-action@v5
+        with:
+          context: .               # Targets the current root directory containing the Dockerfile
+          file: ./Dockerfile       # Points directly to our optimized container manifest
+          push: true               # Instructs the build engine to immediately ship the image up to the cloud
+          tags: |                  # Dual-tagging strategy for zero-downtime rollbacks
+            ${{ secrets.DOCKERHUB_USERNAME }}/nodejs-demo-app:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/nodejs-demo-app:${{ github.sha }}
